@@ -1,0 +1,22 @@
+// Prisma schema for my-todo-app
+// Docs: https://pris.ly/d/prisma-schema
+//
+// Prisma 7 note: connection URLs live in prisma.config.ts, NOT here.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Todo {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  title       String
+  isCompleted Boolean  @default(false) @map("is_completed")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("todos")
+}

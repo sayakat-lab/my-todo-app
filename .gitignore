@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# local notes / docs (not for GitHub)
+/docs/
+
 # debug
 npm-debug.log*
 yarn-debug.log*
