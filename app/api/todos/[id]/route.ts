@@ -1,6 +1,20 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
+import { serializeTodo, type TodoDTO, type ErrorResponse } from "../route";
+
+/* ---------- Shared API types (imported by the client with `import type`) ---------- */
+
+/** PATCH /api/todos/[id] request body (at least one field required) */
+export type UpdateTodoBody = {
+  title?: string;
+  isCompleted?: boolean;
+};
+
+// Re-exported so the client can pull the todo type from this route too.
+export type { TodoDTO } from "../route";
+
+/* -------------------------------------------------------------------------------- */
 
 async function getUserId() {
   const supabase = await createClient();
@@ -14,28 +28,31 @@ type Params = { params: Promise<{ id: string }> };
 export async function PATCH(request: NextRequest, { params }: Params) {
   const userId = await getUserId();
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const body: ErrorResponse = { error: "Unauthorized" };
+    return NextResponse.json(body, { status: 401 });
   }
 
   const { id } = await params;
-  const body = (await request.json().catch(() => null)) as {
+  const parsed = (await request.json().catch(() => null)) as {
     title?: unknown;
     isCompleted?: unknown;
   } | null;
 
   const data: { title?: string; isCompleted?: boolean } = {};
-  if (typeof body?.title === "string") {
-    const title = body.title.trim();
+  if (typeof parsed?.title === "string") {
+    const title = parsed.title.trim();
     if (!title) {
-      return NextResponse.json({ error: "title cannot be empty" }, { status: 400 });
+      const body: ErrorResponse = { error: "title cannot be empty" };
+      return NextResponse.json(body, { status: 400 });
     }
     data.title = title;
   }
-  if (typeof body?.isCompleted === "boolean") {
-    data.isCompleted = body.isCompleted;
+  if (typeof parsed?.isCompleted === "boolean") {
+    data.isCompleted = parsed.isCompleted;
   }
   if (Object.keys(data).length === 0) {
-    return NextResponse.json({ error: "nothing to update" }, { status: 400 });
+    const body: ErrorResponse = { error: "nothing to update" };
+    return NextResponse.json(body, { status: 400 });
   }
 
   // Scope the write to the owner so one user can't modify another's todo.
@@ -44,18 +61,26 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     data,
   });
   if (result.count === 0) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const body: ErrorResponse = { error: "Not found" };
+    return NextResponse.json(body, { status: 404 });
   }
 
   const todo = await prisma.todo.findUnique({ where: { id } });
-  return NextResponse.json(todo);
+  if (!todo) {
+    const body: ErrorResponse = { error: "Not found" };
+    return NextResponse.json(body, { status: 404 });
+  }
+
+  const body: TodoDTO = serializeTodo(todo);
+  return NextResponse.json(body);
 }
 
 // DELETE /api/todos/:id - delete the current user's todo
 export async function DELETE(_request: NextRequest, { params }: Params) {
   const userId = await getUserId();
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const body: ErrorResponse = { error: "Unauthorized" };
+    return NextResponse.json(body, { status: 401 });
   }
 
   const { id } = await params;
@@ -63,7 +88,8 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     where: { id, userId },
   });
   if (result.count === 0) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const body: ErrorResponse = { error: "Not found" };
+    return NextResponse.json(body, { status: 404 });
   }
 
   return new NextResponse(null, { status: 204 });
