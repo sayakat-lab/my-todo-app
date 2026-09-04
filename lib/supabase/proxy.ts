@@ -4,10 +4,37 @@ import { NextResponse, type NextRequest } from "next/server";
 // Public routes that an unauthenticated visitor is allowed to reach.
 const PUBLIC_PATHS = ["/login", "/signup", "/auth"];
 
+// Headers Supabase attaches to any response that sets refreshed auth cookies,
+// so shared caches/CDNs never store a response carrying someone's session.
+const NO_STORE_HEADERS: Record<string, string> = {
+  "Cache-Control": "private, no-cache, no-store, must-revalidate, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+};
+
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );
+}
+
+// Builds a redirect that still carries the session cookies and cache headers
+// staged on `base` during getClaims(). Returning a bare NextResponse.redirect
+// here would drop a token refresh performed on this request and log the user out.
+function redirectCarrying(
+  request: NextRequest,
+  pathname: string,
+  base: NextResponse,
+) {
+  const url = request.nextUrl.clone();
+  url.pathname = pathname;
+  const response = NextResponse.redirect(url);
+  base.cookies.getAll().forEach((cookie) => response.cookies.set(cookie));
+  for (const key of ["cache-control", "pragma", "expires"]) {
+    const value = base.headers.get(key);
+    if (value) response.headers.set(key, value);
+  }
+  return response;
 }
 
 // Refreshes the Supabase auth session on every request and keeps the
@@ -49,22 +76,24 @@ export async function updateSession(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // API routes handle their own auth and return JSON, so never redirect them.
+  // Route handlers may also refresh the token via lib/supabase/server.ts, which
+  // cannot set response headers from its context, so guarantee the no-store
+  // headers here for every /api response.
   if (pathname.startsWith("/api")) {
+    for (const [key, value] of Object.entries(NO_STORE_HEADERS)) {
+      supabaseResponse.headers.set(key, value);
+    }
     return supabaseResponse;
   }
 
   // Not logged in and trying to reach a protected page -> send to /login.
   if (!user && !isPublicPath(pathname)) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
+    return redirectCarrying(request, "/login", supabaseResponse);
   }
 
   // Already logged in but on an auth page -> send to the app.
   if (user && (pathname === "/login" || pathname === "/signup")) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    return NextResponse.redirect(url);
+    return redirectCarrying(request, "/", supabaseResponse);
   }
 
   // IMPORTANT: return supabaseResponse unchanged so the refreshed cookies

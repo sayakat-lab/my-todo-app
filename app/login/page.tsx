@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -11,6 +11,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // A failed /auth/confirm redirect lands back here with ?error=confirm.
+  // One-shot read of the URL on mount (window is client-only), so the
+  // set-state-in-effect this triggers is intentional and runs exactly once.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("error") === "confirm") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setError("確認リンクが無効か、有効期限が切れています。もう一度お試しください。");
+    }
+  }, []);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();

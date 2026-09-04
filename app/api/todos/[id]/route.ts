@@ -22,6 +22,11 @@ async function getUserId() {
   return data?.claims?.sub ?? null;
 }
 
+// Todo ids are Postgres `uuid` columns; a non-UUID segment makes the driver
+// throw (22P02) instead of matching nothing, so reject it as a plain 404.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 type Params = { params: Promise<{ id: string }> };
 
 // PATCH /api/todos/:id - update title and/or completion for the current user's todo
@@ -33,6 +38,11 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 
   const { id } = await params;
+  if (!UUID_RE.test(id)) {
+    const body: ErrorResponse = { error: "Not found" };
+    return NextResponse.json(body, { status: 404 });
+  }
+
   const parsed = (await request.json().catch(() => null)) as {
     title?: unknown;
     isCompleted?: unknown;
@@ -84,6 +94,11 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
   }
 
   const { id } = await params;
+  if (!UUID_RE.test(id)) {
+    const body: ErrorResponse = { error: "Not found" };
+    return NextResponse.json(body, { status: 404 });
+  }
+
   const result = await prisma.todo.deleteMany({
     where: { id, userId },
   });

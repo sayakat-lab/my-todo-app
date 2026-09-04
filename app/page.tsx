@@ -15,31 +15,40 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   const loadTodos = useCallback(async () => {
-    const res = await fetch("/api/todos");
-    if (res.status === 401) {
-      router.replace("/login");
-      return;
-    }
-    if (!res.ok) {
+    try {
+      const res = await fetch("/api/todos");
+      if (res.status === 401) {
+        router.replace("/login");
+        return;
+      }
+      if (!res.ok) {
+        setError("TODO の取得に失敗しました");
+        return;
+      }
+      setTodos((await res.json()) as TodoDTO[]);
+    } catch {
       setError("TODO の取得に失敗しました");
-      return;
     }
-    setTodos((await res.json()) as TodoDTO[]);
   }, [router]);
 
   useEffect(() => {
     const supabase = createClient();
     (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        router.replace("/login");
-        return;
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) {
+          router.replace("/login");
+          return;
+        }
+        setEmail(user.email ?? null);
+        await loadTodos();
+      } catch {
+        setError("読み込みに失敗しました");
+      } finally {
+        setLoading(false);
       }
-      setEmail(user.email ?? null);
-      await loadTodos();
-      setLoading(false);
     })();
   }, [router, loadTodos]);
 
@@ -49,45 +58,57 @@ export default function Home() {
     if (!value) return;
     setError(null);
 
-    const res = await fetch("/api/todos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: value } satisfies CreateTodoBody),
-    });
-    if (!res.ok) {
+    try {
+      const res = await fetch("/api/todos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: value } satisfies CreateTodoBody),
+      });
+      if (!res.ok) {
+        setError("追加に失敗しました");
+        return;
+      }
+      const created = (await res.json()) as TodoDTO;
+      setTodos((prev) => [created, ...prev]);
+      setTitle("");
+    } catch {
       setError("追加に失敗しました");
-      return;
     }
-    const created = (await res.json()) as TodoDTO;
-    setTodos((prev) => [created, ...prev]);
-    setTitle("");
   }
 
   async function toggleTodo(todo: TodoDTO) {
     setError(null);
-    const res = await fetch(`/api/todos/${todo.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        isCompleted: !todo.isCompleted,
-      } satisfies UpdateTodoBody),
-    });
-    if (!res.ok) {
+    try {
+      const res = await fetch(`/api/todos/${todo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          isCompleted: !todo.isCompleted,
+        } satisfies UpdateTodoBody),
+      });
+      if (!res.ok) {
+        setError("更新に失敗しました");
+        return;
+      }
+      const updated = (await res.json()) as TodoDTO;
+      setTodos((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    } catch {
       setError("更新に失敗しました");
-      return;
     }
-    const updated = (await res.json()) as TodoDTO;
-    setTodos((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
   }
 
   async function deleteTodo(id: string) {
     setError(null);
-    const res = await fetch(`/api/todos/${id}`, { method: "DELETE" });
-    if (!res.ok) {
+    try {
+      const res = await fetch(`/api/todos/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        setError("削除に失敗しました");
+        return;
+      }
+      setTodos((prev) => prev.filter((t) => t.id !== id));
+    } catch {
       setError("削除に失敗しました");
-      return;
     }
-    setTodos((prev) => prev.filter((t) => t.id !== id));
   }
 
   async function logout() {
