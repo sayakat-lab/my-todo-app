@@ -6,11 +6,37 @@ import { createClient } from "@/lib/supabase/client";
 import type { TodoDTO, CreateTodoBody } from "@/app/api/todos/route";
 import type { UpdateTodoBody } from "@/app/api/todos/[id]/route";
 
+// Todos due within this many days (inclusive of today) are flagged as "soon".
+const DUE_SOON_DAYS = 3;
+
+// Days between today and a `YYYY-MM-DD` due date (negative = overdue).
+function daysUntil(dueDate: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(`${dueDate}T00:00:00`);
+  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
+}
+
+type DueTone = "overdue" | "soon";
+type DueInfo = { tone: DueTone; label: string };
+
+// Highlight info for an incomplete todo's due date, or `null` if it isn't
+// overdue or due soon (no due date, completed, or still far off).
+function dueInfo(todo: TodoDTO): DueInfo | null {
+  if (!todo.dueDate || todo.isCompleted) return null;
+  const diff = daysUntil(todo.dueDate);
+  if (diff < 0) return { tone: "overdue", label: `期限切れ（${-diff}日経過）` };
+  if (diff === 0) return { tone: "soon", label: "本日が期限" };
+  if (diff <= DUE_SOON_DAYS) return { tone: "soon", label: `あと${diff}日` };
+  return null;
+}
+
 export default function Home() {
   const router = useRouter();
   const [email, setEmail] = useState<string | null>(null);
   const [todos, setTodos] = useState<TodoDTO[]>([]);
   const [title, setTitle] = useState("");
+  const [dueDate, setDueDate] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,7 +78,7 @@ export default function Home() {
     })();
   }, [router, loadTodos]);
 
-  async function addTodo(e: React.FormEvent<HTMLFormElement>) {
+  async function addTodo(e: React.SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     const value = title.trim();
     if (!value) return;
@@ -62,7 +88,10 @@ export default function Home() {
       const res = await fetch("/api/todos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: value } satisfies CreateTodoBody),
+        body: JSON.stringify({
+          title: value,
+          dueDate: dueDate || null,
+        } satisfies CreateTodoBody),
       });
       if (!res.ok) {
         setError("追加に失敗しました");
@@ -71,8 +100,30 @@ export default function Home() {
       const created = (await res.json()) as TodoDTO;
       setTodos((prev) => [created, ...prev]);
       setTitle("");
+      setDueDate("");
     } catch {
       setError("追加に失敗しました");
+    }
+  }
+
+  async function updateDueDate(todo: TodoDTO, value: string) {
+    setError(null);
+    try {
+      const res = await fetch(`/api/todos/${todo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dueDate: value || null,
+        } satisfies UpdateTodoBody),
+      });
+      if (!res.ok) {
+        setError("期限の更新に失敗しました");
+        return;
+      }
+      const updated = (await res.json()) as TodoDTO;
+      setTodos((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    } catch {
+      setError("期限の更新に失敗しました");
     }
   }
 
@@ -143,13 +194,20 @@ export default function Home() {
         <div className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900 p-5 shadow-xl sm:p-8">
           <h1 className="mb-4 text-lg font-semibold">TODO 一覧</h1>
 
-          <form onSubmit={addTodo} className="mb-4 flex gap-2">
+          <form onSubmit={addTodo} className="mb-4 flex flex-wrap gap-2">
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="新しいタスク"
               className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+            />
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              aria-label="期限"
+              className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 outline-none focus:border-indigo-500"
             />
             <button
               type="submit"
@@ -174,34 +232,67 @@ export default function Home() {
                   タスクはありません
                 </li>
               )}
-              {todos.map((todo) => (
-                <li
-                  key={todo.id}
-                  className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5"
-                >
-                  <input
-                    type="checkbox"
-                    checked={todo.isCompleted}
-                    onChange={() => toggleTodo(todo)}
-                    className="size-4 shrink-0 accent-indigo-500"
-                  />
-                  <span
-                    className={`min-w-0 flex-1 break-words text-sm ${
-                      todo.isCompleted
-                        ? "text-zinc-500 line-through"
-                        : "text-zinc-100"
+              {todos.map((todo) => {
+                const info = dueInfo(todo);
+                return (
+                  <li
+                    key={todo.id}
+                    className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2.5 ${
+                      info?.tone === "overdue"
+                        ? "border-red-800 bg-red-950/30"
+                        : info?.tone === "soon"
+                          ? "border-amber-800 bg-amber-950/20"
+                          : "border-zinc-800 bg-zinc-950"
                     }`}
                   >
-                    {todo.title}
-                  </span>
-                  <button
-                    onClick={() => deleteTodo(todo.id)}
-                    className="shrink-0 text-xs text-zinc-500 transition-colors hover:text-red-400"
-                  >
-                    削除
-                  </button>
-                </li>
-              ))}
+                    <input
+                      type="checkbox"
+                      checked={todo.isCompleted}
+                      onChange={() => toggleTodo(todo)}
+                      className="size-4 shrink-0 accent-indigo-500"
+                    />
+                    <span
+                      className={`min-w-0 flex-1 break-words text-sm ${
+                        todo.isCompleted
+                          ? "text-zinc-500 line-through"
+                          : "text-zinc-100"
+                      }`}
+                    >
+                      {todo.title}
+                    </span>
+                    {info && (
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                          info.tone === "overdue"
+                            ? "bg-red-900/60 text-red-300"
+                            : "bg-amber-900/50 text-amber-300"
+                        }`}
+                      >
+                        {info.label}
+                      </span>
+                    )}
+                    <input
+                      type="date"
+                      value={todo.dueDate ?? ""}
+                      onChange={(e) => updateDueDate(todo, e.target.value)}
+                      aria-label="期限を編集"
+                      className={`shrink-0 rounded-md border bg-zinc-950 px-2 py-1 text-xs outline-none focus:border-indigo-500 ${
+                        info?.tone === "overdue"
+                          ? "border-red-700 text-red-300"
+                          : info?.tone === "soon"
+                            ? "border-amber-700 text-amber-300"
+                            : "border-zinc-700 text-zinc-400"
+                      }`}
+                    />
+                    <button
+                      onClick={() => deleteTodo(todo.id)}
+                      className="shrink-0 text-xs text-zinc-500 transition-colors hover:text-red-400"
+                    >
+                      削除
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
