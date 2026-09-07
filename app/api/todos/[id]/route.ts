@@ -1,7 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
-import { serializeTodo, type TodoDTO, type ErrorResponse } from "../route";
+import {
+  serializeTodo,
+  parseDueDate,
+  type TodoDTO,
+  type ErrorResponse,
+} from "../route";
 
 /* ---------- Shared API types (imported by the client with `import type`) ---------- */
 
@@ -9,6 +14,8 @@ import { serializeTodo, type TodoDTO, type ErrorResponse } from "../route";
 export type UpdateTodoBody = {
   title?: string;
   isCompleted?: boolean;
+  /** `YYYY-MM-DD` to set, `null` to clear, or omit to leave unchanged. */
+  dueDate?: string | null;
 };
 
 // Re-exported so the client can pull the todo type from this route too.
@@ -46,9 +53,14 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const parsed = (await request.json().catch(() => null)) as {
     title?: unknown;
     isCompleted?: unknown;
+    dueDate?: unknown;
   } | null;
 
-  const data: { title?: string; isCompleted?: boolean } = {};
+  const data: {
+    title?: string;
+    isCompleted?: boolean;
+    dueDate?: Date | null;
+  } = {};
   if (typeof parsed?.title === "string") {
     const title = parsed.title.trim();
     if (!title) {
@@ -59,6 +71,14 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
   if (typeof parsed?.isCompleted === "boolean") {
     data.isCompleted = parsed.isCompleted;
+  }
+  if (parsed !== null && Object.prototype.hasOwnProperty.call(parsed, "dueDate")) {
+    const dueDateResult = parseDueDate(parsed.dueDate);
+    if (!dueDateResult.ok) {
+      const body: ErrorResponse = { error: "dueDate must be YYYY-MM-DD" };
+      return NextResponse.json(body, { status: 400 });
+    }
+    data.dueDate = dueDateResult.value;
   }
   if (Object.keys(data).length === 0) {
     const body: ErrorResponse = { error: "nothing to update" };
